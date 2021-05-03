@@ -1,0 +1,133 @@
+Decode key-value pairs into struct
+
+package main
+
+import (
+	"fmt"
+	"reflect"
+	"strings"
+)
+
+type User struct {
+	Name    string
+	Github  string
+	private string
+}
+
+func main() {
+	var (
+		v0 User
+		v1 *User
+		v2 = new(User)
+		v3 struct{ Name string }
+		s  = "Name=Ariel,Github=a8m"
+	)
+	fmt.Println(decode(s, &v0), v0) // pass
+	fmt.Println(decode(s, v1), v1)  // fail
+	fmt.Println(decode(s, v2), v2)  // pass
+	fmt.Println(decode(s, v3), v3)  // fail
+	fmt.Println(decode(s, &v3), v3) // pass
+}
+
+func decode(s string, i interface{}) error {
+	v := reflect.ValueOf(i)
+	if v.Kind() != reflect.Ptr || v.IsNil() {
+		return fmt.Errorf("decode requires non-nil pointer")
+	}
+	// get the value that the pointer v points to.
+	v = v.Elem()
+	// assume that the input is valid.
+	for _, kv := range strings.Split(s, ",") {
+		s := strings.Split(kv, "=")
+		f := v.FieldByName(s[0])
+		// make sure that this field is defined, and can be changed.
+		if !f.IsValid() || !f.CanSet() {
+			continue
+		}
+		// assume all the fields are type string.
+		f.SetString(s[1])
+	}
+	return nil
+}
+
+
+
+-------------------------------------------------------------------------------------------------------
+
+package main
+
+import (
+	"fmt"
+	"reflect"
+	"strconv"
+)
+
+type A struct {
+	I int    `default0:"3" default1:"42"`
+	S string `default0:"Some String..." default1:"Some Other String..."`
+}
+
+func setField(field reflect.Value, defaultVal string) error {
+
+	if !field.CanSet() {
+		return fmt.Errorf("Can't set value\n")
+	}
+
+	switch field.Kind() {
+
+	case reflect.Int:
+		if val, err := strconv.ParseInt(defaultVal, 10, 64); err == nil {
+			field.Set(reflect.ValueOf(int(val)).Convert(field.Type()))
+		}
+	case reflect.String:
+		field.Set(reflect.ValueOf(defaultVal).Convert(field.Type()))
+	}
+
+	return nil
+}
+
+func Set(ptr interface{}, tag string) error {
+	if reflect.TypeOf(ptr).Kind() != reflect.Ptr {
+		return fmt.Errorf("Not a pointer")
+	}
+
+	v := reflect.ValueOf(ptr).Elem()
+	t := v.Type()
+
+	for i := 0; i < t.NumField(); i++ {
+		if defaultVal := t.Field(i).Tag.Get(tag); defaultVal != "-" {
+			if err := setField(v.Field(i), defaultVal); err != nil {
+				return err
+			}
+
+		}
+	}
+	return nil
+}
+
+func main() {
+
+	ptr := &A{}
+
+	Set(ptr, "default0")
+	fmt.Printf("ptr.I=%d ptr.S=%s\n", ptr.I, ptr.S)
+	// ptr.I=3 ptr.S=Some String...
+
+	Set(ptr, "default1")
+	fmt.Printf("ptr.I=%d ptr.S=%s\n", ptr.I, ptr.S)
+	// ptr.I=42 ptr.S=Some Other String...
+}
+
+-------------------------------------------------------------------------------------------------------
+
+    u := &User{Name: "Ariel Mashraki"}
+	// Elem returns the value that the pointer u points to.
+	v := reflect.ValueOf(u).Elem()
+	f := v.FieldByName("Github")
+	// make sure that this field is defined, and can be changed.
+	if !f.IsValid() || !f.CanSet() { return }
+	if f.Kind() != reflect.String || f.String() != "" { return}
+	f.SetString("a8m")
+	fmt.Printf("Github username was changed to: %q\n", u.Github)
+
+-------------------------------------------------------------------------------------------------------
