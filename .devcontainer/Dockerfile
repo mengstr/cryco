@@ -20,7 +20,7 @@ RUN if [ "${INSTALL_NODE}" = "true" ]; then su vscode -c "umask 0002 && . /usr/l
     github.com/josharian/impl \
     github.com/davidrjenni/reftools/cmd/fillstruct \
     github.com/fatih/gomodifytags \
-    github.com/go-delve/delve/cmd/dlv@latest
+    github.com/go-delve/delve/cmd/dlv
     
 
 # [Optional] Uncomment this line to install global node packages.
