@@ -47,7 +47,7 @@ func setValue(p interface{}, key string, value string) error {
 	if f.Kind() == reflect.Float64 {
 		f64, err := strconv.ParseFloat(value, 64)
 		if err != nil {
-			return fmt.Errorf("Can't parse %v as float64", value)
+			return fmt.Errorf("%w %v", ErrParse, err)
 		}
 		f.SetFloat(f64)
 		return nil
