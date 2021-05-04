@@ -39,6 +39,8 @@ var (
 	ErrBase64 = errors.New("Bad Base64 format")
 	// ErrInternal ...
 	ErrInternal = errors.New("Internal/OS error")
+	// ErrInvalidKey ...
+	ErrInvalidKey = errors.New("Invalid key")
 )
 
 // Returns the sanatized name of the running program
@@ -71,7 +73,7 @@ func GetKey() ([]byte, error) {
 	}
 	bKey, err := base64.StdEncoding.DecodeString(s)
 	if err != nil || len(bKey) != keylen {
-		return nil, fmt.Errorf("%w (%s)", ErrBase64, s)
+		return []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, fmt.Errorf("%w (%s)", ErrBase64, s)
 	}
 	return bKey, nil
 }
@@ -92,14 +94,12 @@ func Decrypt(bKey []byte, cipherB64 string) (string, error) {
 	}
 	nonceSize := aead.NonceSize()
 	if len(encryptData) < nonceSize {
-		if err != nil {
-			return "", fmt.Errorf("%w (c)", ErrInternal)
-		}
+		return "", fmt.Errorf("%w (c)", ErrInternal)
 	}
 	nonce, cipherText := encryptData[:nonceSize], encryptData[nonceSize:]
 	plainData, err := aead.Open(nil, nonce, cipherText, nil)
 	if err != nil {
-		return "", fmt.Errorf("%w (d) %v", ErrInternal, err)
+		return "", fmt.Errorf("%w %v", ErrInvalidKey, err)
 	}
 	return string(plainData), nil
 }
