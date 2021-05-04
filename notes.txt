@@ -131,3 +131,31 @@ func main() {
 	fmt.Printf("Github username was changed to: %q\n", u.Github)
 
 -------------------------------------------------------------------------------------------------------
+
+func decrypt(encodedData string, secret []byte) (string, error) {
+        encryptData, err := base64.URLEncoding.DecodeString(encodedData)
+        cipherBlock, err := aes.NewCipher(secret)
+        aead, err := cipher.NewGCM(cipherBlock)
+        nonceSize := aead.NonceSize()
+        if len(encryptData) < nonceSize {
+                return "", err
+        }
+         nonce, cipherText := encryptData[:nonceSize], encryptData[nonceSize:]
+        plainData, err := aead.Open(nil, nonce, cipherText, nil)
+        return string(plainData), nil
+-------------------------------------------------------------------------------------------------------
+
+go build -ldflags "-X main.GitCommit=$GIT_COMMIT"
+
+go build -o m -ldflags "-X github.com/mengstr/cryco.key=Banan" .
+
+go test -v -ldflags "-X github.com/mengstr/cryco.key=XXXXXX" .
+
+-------------------------------------------------------------------------------------------------------
+
+AaaaaaaaaaaaaaaA 	QWFhYWFhYWFhYWFhYWFhQQ==
+BbbbbbbbbbbbbbbB 	QmJiYmJiYmJiYmJiYmJiQg==
+
+-------------------------------------------------------------------------------------------------------
+
+https://quii.gitbook.io/learn-go-with-tests/go-fundamentals/dependency-injection

@@ -2,13 +2,26 @@ package cryco
 
 import (
 	"bufio"
+	"crypto/aes"
+	"crypto/cipher"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"reflect"
+	"regexp"
 	"strconv"
 	"strings"
+)
+
+const (
+	keylen = 16 // AES128
+)
+
+var (
+	key = "" // Set by go build -ldflags "-X github.com/mengstr/cryco.key=......."
 )
 
 var (
@@ -22,15 +35,83 @@ var (
 	ErrBadFileFormat = errors.New("Bad file format")
 	// ErrUnhandledType ...
 	ErrUnhandledType = errors.New("Not handling field type")
+	// ErrBase64 ...
+	ErrBase64 = errors.New("Bad Base64 format")
+	// ErrInternal ...
+	ErrInternal = errors.New("Internal/OS error")
 )
 
-func setValue(p interface{}, key string, value string) error {
-	// Elem returns the value that the pointer u points to.
+// Returns the sanatized name of the running program
+func exeName() (string, error) {
+	s, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("%w from os.Executable %v", ErrInternal, err)
+	}
+	s = filepath.Base(s)
+
+	reg, err := regexp.Compile("[^a-zA-Z0-9_]+")
+	if err != nil {
+		return "", fmt.Errorf("%w - %v", ErrInternal, err)
+	}
+	return reg.ReplaceAllString(s, ""), nil
+}
+
+// GetKey Returns the active key decoded from its original Base64
+func GetKey() ([]byte, error) {
+	name, err := exeName()
+	if err != nil {
+		return nil, err
+	}
+	s := os.Getenv("KEY" + name)
+	if s == "" {
+		s = key
+	}
+	if s == "" {
+		return []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, nil
+	}
+	bKey, err := base64.StdEncoding.DecodeString(s)
+	if err != nil || len(bKey) != keylen {
+		return nil, fmt.Errorf("%w (%s)", ErrBase64, s)
+	}
+	return bKey, nil
+}
+
+// Decrypt takes a base64 encoded ciphertext string and decrypts it into a cleartext string
+func Decrypt(bKey []byte, cipherB64 string) (string, error) {
+	encryptData, err := base64.URLEncoding.DecodeString(cipherB64)
+	if err != nil {
+		return "", fmt.Errorf("%w %v", ErrBase64, err)
+	}
+	cipherBlock, err := aes.NewCipher(bKey)
+	if err != nil {
+		return "", fmt.Errorf("%w (a)", ErrInternal)
+	}
+	aead, err := cipher.NewGCM(cipherBlock)
+	if err != nil {
+		return "", fmt.Errorf("%w (b)", ErrInternal)
+	}
+	nonceSize := aead.NonceSize()
+	if len(encryptData) < nonceSize {
+		if err != nil {
+			return "", fmt.Errorf("%w (c)", ErrInternal)
+		}
+	}
+	nonce, cipherText := encryptData[:nonceSize], encryptData[nonceSize:]
+	plainData, err := aead.Open(nil, nonce, cipherText, nil)
+	if err != nil {
+		return "", fmt.Errorf("%w (d) %v", ErrInternal, err)
+	}
+	return string(plainData), nil
+}
+
+//
+func setValue(p interface{}, field string, value string) error {
+	// Elem returns the value that the pointer p points to.
 	v := reflect.ValueOf(p).Elem()
-	f := v.FieldByName(key)
+	f := v.FieldByName(field)
 	// make sure that this field is defined, and can be changed.
 	if !f.IsValid() || !f.CanSet() {
-		return fmt.Errorf("%w - field %s", ErrNotExported, key)
+		return fmt.Errorf("%w - field %s", ErrNotExported, field)
 	}
 	if f.Kind() == reflect.String {
 		f.SetString(value)
@@ -58,7 +139,7 @@ func setValue(p interface{}, key string, value string) error {
 }
 
 // SetDefaults ...
-func SetDefaults(struc interface{}) error {
+func SetDefaults(struc interface{}, bKey []byte) error {
 	var err error
 
 	if reflect.TypeOf(struc).Kind() != reflect.Ptr || reflect.ValueOf(struc).Elem().Kind() != reflect.Struct {
@@ -71,6 +152,10 @@ func SetDefaults(struc interface{}) error {
 		if defv == "" && !ok {
 			continue
 		}
+		defv, err = Decrypt(bKey, defv)
+		if err != nil {
+			return err
+		}
 		err = setValue(struc, reflect.ValueOf(struc).Elem().Type().Field(i).Name, defv)
 		if err != nil {
 			return err
@@ -81,7 +166,11 @@ func SetDefaults(struc interface{}) error {
 
 // ParseReaders parses data from one or more io.Readers
 func ParseReaders(struc interface{}, readers []io.Reader) error {
-	if err := SetDefaults(struc); err != nil {
+	bKey, err := GetKey()
+	if err != nil {
+		return err
+	}
+	if err := SetDefaults(struc, bKey); err != nil {
 		return err
 	}
 
@@ -99,9 +188,9 @@ func ParseReaders(struc interface{}, readers []io.Reader) error {
 			if len(ss) < 2 {
 				return fmt.Errorf("%w, missing = at '%s'", ErrBadFileFormat, s)
 			}
-			key := strings.TrimSpace(ss[0])
+			field := strings.TrimSpace(ss[0])
 			value := strings.TrimSpace(ss[1])
-			if err := setValue(struc, key, value); err != nil {
+			if err := setValue(struc, field, value); err != nil {
 				return err
 			}
 			processed = true
