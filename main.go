@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -80,6 +81,11 @@ func GetKey() ([]byte, error) {
 
 // Decrypt takes a base64 encoded ciphertext string and decrypts it into a cleartext string
 func Decrypt(bKey []byte, cipherB64 string) (string, error) {
+	// If string is bracketed with paranthesis () then if should be treated as cleartext so
+	// remove the paranthesises and return as is
+	if len(cipherB64) > 1 && cipherB64[0:1] == "(" && cipherB64[len(cipherB64)-1:] == ")" {
+		return cipherB64[1 : len(cipherB64)-1], nil
+	}
 	encryptData, err := base64.URLEncoding.DecodeString(cipherB64)
 	if err != nil {
 		return "", fmt.Errorf("%w %v", ErrBase64, err)
@@ -106,6 +112,7 @@ func Decrypt(bKey []byte, cipherB64 string) (string, error) {
 
 //
 func setValue(p interface{}, field string, value string) error {
+	log.Printf("setValue '%s' to '%s' ", field, value)
 	// Elem returns the value that the pointer p points to.
 	v := reflect.ValueOf(p).Elem()
 	f := v.FieldByName(field)
@@ -138,8 +145,40 @@ func setValue(p interface{}, field string, value string) error {
 
 }
 
+// SetFromEnv ...
+func SetFromEnv(struc interface{}, bKey []byte) error {
+	log.Println("SETENVS")
+	var err error
+
+	if reflect.TypeOf(struc).Kind() != reflect.Ptr || reflect.ValueOf(struc).Elem().Kind() != reflect.Struct {
+		return ErrNotStructPtr
+	}
+
+	for i := 0; i < reflect.ValueOf(struc).Elem().NumField(); i++ {
+		envname := reflect.ValueOf(struc).Elem().Type().Field(i).Tag.Get("env")
+		_, ok := reflect.ValueOf(struc).Elem().Type().Field(i).Tag.Lookup("")
+		if envname == "" && !ok {
+			continue
+		}
+		defv, ok := os.LookupEnv(envname)
+		if !ok {
+			continue
+		}
+		defv, err = Decrypt(bKey, defv)
+		if err != nil {
+			return err
+		}
+		err = setValue(struc, reflect.ValueOf(struc).Elem().Type().Field(i).Name, defv)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // SetDefaults ...
 func SetDefaults(struc interface{}, bKey []byte) error {
+	log.Println("SETDEFAULT")
 	var err error
 
 	if reflect.TypeOf(struc).Kind() != reflect.Ptr || reflect.ValueOf(struc).Elem().Kind() != reflect.Struct {
@@ -166,6 +205,7 @@ func SetDefaults(struc interface{}, bKey []byte) error {
 
 // ParseReaders parses data from one or more io.Readers
 func ParseReaders(struc interface{}, readers []io.Reader) error {
+	log.Println("PARSEREADERS")
 	bKey, err := GetKey()
 	if err != nil {
 		return err
@@ -202,7 +242,8 @@ func ParseReaders(struc interface{}, readers []io.Reader) error {
 			break
 		}
 	}
-	return nil
+
+	return SetFromEnv(struc, bKey)
 }
 
 // ParseFiles tries to parse each file in the list and stops after the first parseable file.

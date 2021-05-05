@@ -159,3 +159,21 @@ BbbbbbbbbbbbbbbB 	QmJiYmJiYmJiYmJiYmJiQg==
 -------------------------------------------------------------------------------------------------------
 
 https://quii.gitbook.io/learn-go-with-tests/go-fundamentals/dependency-injection
+
+-------------------------------------------------------------------------------------------------------
+
+git tag v0.1.0-alpha
+git push origin v0.1.0-alpha
+
+-------------------------------------------------------------------------------------------------------
+
+	var optionMode string
+	flag.StringVar(&optionMode, "mode", "add","Choose 'add' or 'multiply'")
+	flag.Parse()
+	fmt.Println(calc(optionMode, flag.Args()))
+//
+	var optionMode string
+	commandLine := flag.NewFlagSet(os.Args[0], flag.ExitOnError)
+	commandLine.StringVar(&optionMode, "mode", "add", "Choose 'add' or 'multiply'")
+	commandLine.Parse(os.Args[1:])
+	total, err := calc(optionMode, commandLine.Args())
