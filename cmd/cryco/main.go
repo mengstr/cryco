@@ -30,7 +30,8 @@ func main() {
 	plaintext := flag.Arg(0)
 
 	if *genKey {
-		fmt.Fprintln(out, GenerateKey(keylen))
+		fmt.Fprintln(out, GenerateKey())
+		os.Exit(0)
 
 	}
 
@@ -98,8 +99,8 @@ func main() {
 	fmt.Fprintln(out, base64.URLEncoding.EncodeToString(aead.Seal(nonce, nonce, []byte(plaintext), nil)))
 }
 
-// GenerateKey ...
-func GenerateKey(l int) string {
+// GenerateKey ..
+func GenerateKey() string {
 	key := make([]byte, keylen)
 	_, err := rand.Read(key)
 	if err != nil {
@@ -109,6 +110,7 @@ func GenerateKey(l int) string {
 	return base64.URLEncoding.EncodeToString(key)
 }
 
+// Check if a []byte are all zeros
 func allZero(s []byte) bool {
 	for _, v := range s {
 		if v != 0 {

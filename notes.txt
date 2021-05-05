@@ -162,8 +162,8 @@ https://quii.gitbook.io/learn-go-with-tests/go-fundamentals/dependency-injection
 
 -------------------------------------------------------------------------------------------------------
 
-git tag v0.1.0-alpha
-git push origin v0.1.0-alpha
+git tag v0.1.1-alpha
+git push origin v0.1.1-alpha
 
 -------------------------------------------------------------------------------------------------------
 
