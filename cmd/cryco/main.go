@@ -25,7 +25,7 @@ func main() {
 	key := make([]byte, keylen)
 
 	genKey := flag.Bool("gen", false, "Generate key")
-	keyName := flag.String("key", "", "Use env '<name>' instead of 'crycokey' as key")
+	keyName := flag.String("key", "", "Use env <string> instead of 'CRYCOKEY' as the key")
 	flag.Parse()
 	plaintext := flag.Arg(0)
 
@@ -35,15 +35,15 @@ func main() {
 
 	}
 
-	s := os.Getenv("KEYcryco")
+	s := os.Getenv("CRYCOKEY")
 	if s != "" {
 		b, err := base64.URLEncoding.DecodeString(s)
 		if err != nil {
-			fmt.Fprintf(eout, "Can't decode crycokey from env: %s\n", err)
+			fmt.Fprintf(eout, "Can't decode CRYCOKEY from env: %s\n", err)
 			os.Exit(1)
 		}
 		if len(b) != keylen {
-			fmt.Fprintf(eout, "Decoded crycokey is not 16 bytes\n")
+			fmt.Fprintf(eout, "Decoded CRYCOKEY is not 16 bytes\n")
 			os.Exit(1)
 		}
 		key = b
