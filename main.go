@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -18,11 +17,15 @@ import (
 )
 
 const (
-	keylen = 16 // AES128
+	keylen     = 16 // AES128
+	tagDefVal  = "def"
+	tagFileVal = "fil"
+	tagEnvVal  = "env"
 )
 
 var (
-	key = "" // Set by go build -ldflags "-X github.com/mengstr/cryco.key=......."
+	// Set by go build -ldflags "-X github.com/mengstr/cryco.key=......."
+	key = ""
 )
 
 var (
@@ -59,7 +62,10 @@ func exeName() (string, error) {
 	return reg.ReplaceAllString(s, ""), nil
 }
 
-// GetKey Returns the active key decoded from its original Base64
+// GetKey Returns the active key decoded from its original Base64 encoding
+// The key is retreived from either an environment variable named KEY<executable name>
+// or locally from the executable using a variable that got its value patched into
+// it during build.
 func GetKey() ([]byte, error) {
 	name, err := exeName()
 	if err != nil {
@@ -80,9 +86,10 @@ func GetKey() ([]byte, error) {
 }
 
 // Decrypt takes a base64 encoded ciphertext string and decrypts it into a cleartext string
+// If value string is bracketed with paranthesis () then it should be treated as cleartext so
+// remove the paranthesises and return as is
 func Decrypt(bKey []byte, cipherB64 string) (string, error) {
-	// If string is bracketed with paranthesis () then if should be treated as cleartext so
-	// remove the paranthesises and return as is
+	// Cleartext?
 	if len(cipherB64) > 1 && cipherB64[0:1] == "(" && cipherB64[len(cipherB64)-1:] == ")" {
 		return cipherB64[1 : len(cipherB64)-1], nil
 	}
@@ -111,101 +118,124 @@ func Decrypt(bKey []byte, cipherB64 string) (string, error) {
 }
 
 //
-func setValue(p interface{}, field string, value string) error {
-	log.Printf("setValue '%s' to '%s' ", field, value)
-	// Elem returns the value that the pointer p points to.
-	v := reflect.ValueOf(p).Elem()
-	f := v.FieldByName(field)
-	// make sure that this field is defined, and can be changed.
-	if !f.IsValid() || !f.CanSet() {
+func setFieldValue(p interface{}, field string, value string) error {
+	var err error
+
+	if err = CheckParam(p); err != nil {
+		return err
+	}
+	fld := reflect.ValueOf(p).Elem().FieldByName(field)
+	if !fld.IsValid() || !fld.CanSet() {
 		return fmt.Errorf("%w - field %s", ErrNotExported, field)
 	}
-	if f.Kind() == reflect.String {
-		f.SetString(value)
-		return nil
-	}
-	if f.Kind() == reflect.Int64 {
+	switch fld.Kind() {
+	case reflect.String:
+		fld.SetString(value)
+	case reflect.Int64:
 		i64, err := strconv.ParseInt(value, 10, 64)
 		if err != nil {
 			return fmt.Errorf("%w %v", ErrParse, err)
 		}
-		f.SetInt(i64)
-		return nil
-	}
-	if f.Kind() == reflect.Float64 {
+		fld.SetInt(i64)
+	case reflect.Float64:
 		f64, err := strconv.ParseFloat(value, 64)
 		if err != nil {
 			return fmt.Errorf("%w %v", ErrParse, err)
 		}
-		f.SetFloat(f64)
-		return nil
+		fld.SetFloat(f64)
+	default:
+		return fmt.Errorf("%w %s", ErrUnhandledType, fld.Kind())
 	}
+	return nil
+}
 
-	return fmt.Errorf("%w %s", ErrUnhandledType, f.Kind())
-
+//
+func setValueFromTag(p interface{}, tagType string, tagName string, value string) error {
+	var err error
+	if err = CheckParam(p); err != nil {
+		return err
+	}
+	// Iterate over the fields until the right one is found
+	for i := 0; i < reflect.ValueOf(p).Elem().NumField(); i++ {
+		tv, ok := reflect.ValueOf(p).Elem().Type().Field(i).Tag.Lookup(tagType)
+		if ok && tv == tagName {
+			fieldName := reflect.ValueOf(p).Elem().Type().Field(i).Name
+			setFieldValue(p, fieldName, value)
+			return nil
+		}
+	}
+	return nil
 }
 
 // SetFromEnv ...
-func SetFromEnv(struc interface{}, bKey []byte) error {
-	log.Println("SETENVS")
+func SetFromEnv(p interface{}, bKey []byte) error {
 	var err error
 
-	if reflect.TypeOf(struc).Kind() != reflect.Ptr || reflect.ValueOf(struc).Elem().Kind() != reflect.Struct {
+	if err = CheckParam(p); err != nil {
+		return err
+	}
+	// Iterate over the fields until the right one is found
+	for i := 0; i < reflect.ValueOf(p).Elem().NumField(); i++ {
+		tv, ok := reflect.ValueOf(p).Elem().Type().Field(i).Tag.Lookup(tagEnvVal)
+		if ok {
+			fieldName := reflect.ValueOf(p).Elem().Type().Field(i).Name
+			value, ok := os.LookupEnv(tv)
+			if !ok {
+				continue
+			}
+			value, err = Decrypt(bKey, value)
+			if err != nil {
+				return err
+			}
+			setFieldValue(p, fieldName, value)
+		}
+	}
+	return nil
+}
+
+// CheckParam verifies that the param is pointer to a struct
+func CheckParam(p interface{}) error {
+	if reflect.TypeOf(p).Kind() != reflect.Ptr {
 		return ErrNotStructPtr
 	}
-
-	for i := 0; i < reflect.ValueOf(struc).Elem().NumField(); i++ {
-		envname := reflect.ValueOf(struc).Elem().Type().Field(i).Tag.Get("env")
-		_, ok := reflect.ValueOf(struc).Elem().Type().Field(i).Tag.Lookup("")
-		if envname == "" && !ok {
-			continue
-		}
-		defv, ok := os.LookupEnv(envname)
-		if !ok {
-			continue
-		}
-		defv, err = Decrypt(bKey, defv)
-		if err != nil {
-			return err
-		}
-		err = setValue(struc, reflect.ValueOf(struc).Elem().Type().Field(i).Name, defv)
-		if err != nil {
-			return err
-		}
+	if reflect.ValueOf(p).Elem().Kind() != reflect.Struct {
+		return ErrNotStructPtr
 	}
 	return nil
 }
 
 // SetDefaults ...
 func SetDefaults(struc interface{}, bKey []byte) error {
-	log.Println("SETDEFAULT")
 	var err error
-
-	if reflect.TypeOf(struc).Kind() != reflect.Ptr || reflect.ValueOf(struc).Elem().Kind() != reflect.Struct {
-		return ErrNotStructPtr
+	if err = CheckParam(struc); err != nil {
+		return err
 	}
-
-	for i := 0; i < reflect.ValueOf(struc).Elem().NumField(); i++ {
-		defv := reflect.ValueOf(struc).Elem().Type().Field(i).Tag.Get("default")
-		_, ok := reflect.ValueOf(struc).Elem().Type().Field(i).Tag.Lookup("")
-		if defv == "" && !ok {
-			continue
-		}
-		defv, err = Decrypt(bKey, defv)
-		if err != nil {
-			return err
-		}
-		err = setValue(struc, reflect.ValueOf(struc).Elem().Type().Field(i).Name, defv)
-		if err != nil {
-			return err
+	// Scan entire array for default tags and apply them
+	e := reflect.ValueOf(struc).Elem()
+	for i := 0; i < e.NumField(); i++ {
+		fld := e.Type().Field(i)
+		value, ok := fld.Tag.Lookup(tagDefVal)
+		if ok {
+			if value, err = Decrypt(bKey, value); err != nil {
+				return err
+			}
+			if err = setFieldValue(struc, fld.Name, value); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
 }
 
-// ParseReaders parses data from one or more io.Readers
+// ParseReaders parses data from one or more io.Readers.
+// First set the dafault values,
+// then apply values from the files,
+// finally set values from environment variables
 func ParseReaders(struc interface{}, readers []io.Reader) error {
-	log.Println("PARSEREADERS")
+	var err error
+	if err = CheckParam(struc); err != nil {
+		return err
+	}
 	bKey, err := GetKey()
 	if err != nil {
 		return err
@@ -213,7 +243,8 @@ func ParseReaders(struc interface{}, readers []io.Reader) error {
 	if err := SetDefaults(struc, bKey); err != nil {
 		return err
 	}
-
+	// Process all lines in each reader. As soon as one reader have had
+	// any values in it stop processing the rest of the readers.
 	processed := false
 	cnt := 0
 	for _, r := range readers {
@@ -221,16 +252,22 @@ func ParseReaders(struc interface{}, readers []io.Reader) error {
 		scanner := bufio.NewScanner(r)
 		for scanner.Scan() {
 			s := strings.TrimSpace(scanner.Text())
+			// Skip empty lines and comments
 			if s == "" || string(s[0]) == "#" {
 				continue
 			}
+			// Split line into key (the tag name) and value
 			ss := strings.SplitN(s, "=", 2)
 			if len(ss) < 2 {
 				return fmt.Errorf("%w, missing = at '%s'", ErrBadFileFormat, s)
 			}
-			field := strings.TrimSpace(ss[0])
-			value := strings.TrimSpace(ss[1])
-			if err := setValue(struc, field, value); err != nil {
+			// Decrypt the value
+			value, err := Decrypt(bKey, strings.TrimSpace(ss[1]))
+			if err != nil {
+				return err
+			}
+			// Set the value in the struct, using the tag name
+			if err := setValueFromTag(struc, tagFileVal, strings.TrimSpace(ss[0]), value); err != nil {
 				return err
 			}
 			processed = true
@@ -238,16 +275,24 @@ func ParseReaders(struc interface{}, readers []io.Reader) error {
 		if err := scanner.Err(); err != nil {
 			return err
 		}
+		// Stop scanning files as soon as the first usable file has been fully processed
 		if processed {
 			break
 		}
 	}
-
+	// Finish with setting values from envronment variables
 	return SetFromEnv(struc, bKey)
 }
 
 // ParseFiles tries to parse each file in the list and stops after the first parseable file.
 func ParseFiles(struc interface{}, filenames ...string) error {
+	var err error
+
+	if err = CheckParam(struc); err != nil {
+		return err
+	}
+
+	// Opens all specified files...
 	var rdrs []io.Reader
 	for _, filename := range filenames {
 		f, err := os.Open(filename)
@@ -257,5 +302,6 @@ func ParseFiles(struc interface{}, filenames ...string) error {
 		defer f.Close()
 		rdrs = append(rdrs, f)
 	}
+	// ...and pass the readers into the ParseReaders() for processing
 	return ParseReaders(struc, rdrs)
 }
